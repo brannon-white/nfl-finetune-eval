@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+
+# raw/processed data and model artifacts are large and reproducible from scripts
+data/raw/
+data/processed/
+data/eval/*.jsonl
+models/
+*.gguf
+chroma_db/
+
+# keep summary results, not raw dumps
+results/*.json
+results/*.csv
+!results/REPORT.md
+
+.env
+.DS_Store

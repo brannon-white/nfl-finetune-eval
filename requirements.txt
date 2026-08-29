@@ -1,0 +1,26 @@
+# Data
+pypdf>=4.0
+tqdm
+
+# Fine-tuning (Unsloth pulls in a pinned torch/transformers/peft/trl stack --
+# install it first, then let it resolve the rest)
+unsloth
+peft
+trl
+bitsandbytes
+accelerate
+transformers
+
+# Serving
+vllm
+
+# RAG
+sentence-transformers
+chromadb
+
+# Eval
+openai          # used only as an OpenAI-compatible client against local vLLM
+anthropic       # SFT synthesis + LLM-judge scoring
+lm_eval         # lm-evaluation-harness, for the regression slice
+
+python-dotenv
