@@ -20,6 +20,9 @@ import random
 from pathlib import Path
 
 from anthropic import Anthropic
+from dotenv import load_dotenv
+
+load_dotenv()
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "data" / "raw"
@@ -71,12 +74,17 @@ def synthesize_pairs(client: Anthropic, chunk: dict, n_pairs: int) -> list[dict]
             "content": f"Generate {n_pairs} Q/A pairs from this passage:\n\n{chunk['text']}",
         }],
     )
-    raw = resp.content[0].text
+    raw = next(block.text for block in resp.content if block.type == "text")
     try:
         pairs = json.loads(raw)
     except json.JSONDecodeError:
         start, end = raw.find("["), raw.rfind("]") + 1
         pairs = json.loads(raw[start:end])
+
+    if not isinstance(pairs, list) or not all(
+        isinstance(p, dict) and "question" in p and "answer" in p for p in pairs
+    ):
+        raise ValueError(f"unexpected synthesis response shape: {raw[:200]!r}")
     return pairs
 
 
@@ -101,9 +109,15 @@ def main(pairs_per_chunk: int, seed: int = 42) -> None:
 
     client = Anthropic()  # reads ANTHROPIC_API_KEY from env
     train_examples, val_examples, held_out_examples = [], [], []
+    skipped = 0
 
     for c in chunks:
-        pairs = synthesize_pairs(client, c, pairs_per_chunk)
+        try:
+            pairs = synthesize_pairs(client, c, pairs_per_chunk)
+        except (json.JSONDecodeError, StopIteration, ValueError) as e:
+            print(f"[skip] {c['chunk_id']}: could not parse synthesis response ({e})")
+            skipped += 1
+            continue
         for p in pairs:
             record = {
                 "chunk_id": c["chunk_id"],
@@ -136,7 +150,7 @@ def main(pairs_per_chunk: int, seed: int = 42) -> None:
     )
 
     print(f"SFT pairs: {len(train_examples)} train / {len(val_examples)} val / "
-          f"{len(held_out_examples)} held_out (eval set)")
+          f"{len(held_out_examples)} held_out (eval set), {skipped} chunks skipped")
 
 
 if __name__ == "__main__":

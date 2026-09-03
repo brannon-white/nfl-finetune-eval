@@ -45,7 +45,7 @@ def judge(client: Anthropic, question: str, source_text: str,
             ),
         }],
     )
-    raw = resp.content[0].text
+    raw = next(block.text for block in resp.content if block.type == "text")
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
