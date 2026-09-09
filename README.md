@@ -81,10 +81,10 @@ python eval/report.py                    # aggregates everything into results/RE
 `serve/vertex_entrypoint.sh` + `serve/Dockerfile.vertex` ship a path to deploy
 the fine-tune to a Vertex AI Endpoint instead of serving it locally (pass
 `--finetuned-backend vertex`, the default, to `eval/run_eval.py`). That path
-was scaffolded for the GCP managed-endpoint experience but not exercised in
-this run -- see "Compute" below for the merge-vs-LoRA-serving decision that
-affects it, and rework `06_deploy_vertex_endpoint.py` (it still assumes a
-`models/merged/` directory) before using it.
+deploys the LoRA adapter directly (same `--enable-lora` vLLM serving as
+`serve/vllm_finetuned.sh`, not a merged checkpoint -- see "Compute" below for
+why) but hasn't been run end-to-end against real GCP infra in this project;
+the run behind `results/REPORT.md` used `--finetuned-backend local` instead.
 
 ## One manual step
 
@@ -97,11 +97,11 @@ you're putting on a public portfolio.
 
 Training and serving both ran on a single RunPod pod (RTX 3090, 24GB) --
 cheap, fast-iteration compute for the whole pipeline. A Vertex AI Endpoint
-deployment path is scaffolded (`scripts/06_deploy_vertex_endpoint.py` /
+deployment path is also implemented (`scripts/06_deploy_vertex_endpoint.py` /
 `07_teardown_vertex_endpoint.py`, `serve/vertex_entrypoint.sh` +
 `Dockerfile.vertex`) for the GCP managed-endpoint experience, but wasn't
-exercised in the run behind `results/REPORT.md` -- see below for why, and for
-what it'd take to actually run it.
+exercised in the run behind `results/REPORT.md` -- see below for the
+merge-vs-LoRA-serving decision that shaped it, and for its current status.
 
 **Training and serving (RunPod, single 24GB GPU):**
 
@@ -125,13 +125,17 @@ weights, and re-saving a 4-bit-merged checkpoint hit an unfixable
 path. Rather than chase a library bug, `serve/vllm_finetuned.sh` serves the
 adapter directly via vLLM's native `--enable-lora` support -- numerically
 equivalent (the LoRA deltas are the same small matrices either way) and a
-first-class, separately-tested vLLM code path. This is also why the Vertex
-deploy script needs rework before use: it currently assumes a `models/merged/`
-directory that this pipeline no longer produces. The straightforward fix is
-either (a) point `06_deploy_vertex_endpoint.py` at the base weights + LoRA
-adapter and switch its custom container to vLLM's `--enable-lora` flag, same
-as `serve/vllm_finetuned.sh`, or (b) find an environment where the merge
-actually succeeds (a non-quantized base, or an older transformers pin).
+first-class, separately-tested vLLM code path. The Vertex deploy script
+follows the same approach: it syncs just the small LoRA adapter to GCS and
+deploys a custom container (`serve/Dockerfile.vertex` + `vertex_entrypoint.sh`)
+that downloads the base model fresh from HF at container start and serves
+base + adapter via vLLM's `--enable-lora`, rather than assuming a merged
+`models/merged/` checkpoint. This has been deployed and debugged for real on
+Vertex -- the prebuilt-image and base-model-swap dead ends noted in
+`Dockerfile.vertex` and `06_deploy_vertex_endpoint.py` came from actual
+failed deploy attempts, not guesses -- but the full eval pass behind
+`results/REPORT.md` used `--finetuned-backend local` rather than a Vertex
+endpoint, so the numbers in this repo don't reflect a Vertex-served run.
 
 ## Scoring
 
