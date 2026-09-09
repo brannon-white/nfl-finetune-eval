@@ -7,9 +7,9 @@ Usage:
 import argparse
 from pathlib import Path
 
+from unsloth import FastLanguageModel
 from datasets import load_dataset
 from trl import SFTConfig, SFTTrainer
-from unsloth import FastLanguageModel
 
 ROOT = Path(__file__).resolve().parent.parent
 PROCESSED_DIR = ROOT / "data" / "processed"
@@ -53,13 +53,13 @@ def main(base_model: str, epochs: int, lr: float, max_seq_len: int) -> None:
     ADAPTER_DIR.mkdir(parents=True, exist_ok=True)
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         train_dataset=dataset["train"],
         eval_dataset=dataset["validation"],
-        dataset_text_field="text",
-        max_seq_length=max_seq_len,
         args=SFTConfig(
             output_dir=str(ADAPTER_DIR),
+            dataset_text_field="text",
+            max_length=max_seq_len,
             num_train_epochs=epochs,
             per_device_train_batch_size=2,
             gradient_accumulation_steps=4,

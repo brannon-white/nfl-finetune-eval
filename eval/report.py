@@ -40,10 +40,19 @@ def summarize_regression() -> str:
     base = json.loads(base_path.read_text())["results"]
     ft = json.loads(ft_path.read_text())["results"]
 
+    def primary_metric(task_result: dict) -> float:
+        # Real lm-eval-harness metrics are keyed "metric,filter" (e.g. "acc,none");
+        # everything else in this dict is string/int metadata (name, alias,
+        # sample_len) that happens to also be numeric in sample_len's case.
+        for key, value in task_result.items():
+            if "," in key and "stderr" not in key and isinstance(value, (int, float)):
+                return value
+        raise ValueError(f"no numeric metric found in {task_result}")
+
     lines = ["| Task | Base | Fine-tuned | Delta |", "|---|---|---|---|"]
     for task in base:
-        base_score = list(base[task].values())[0]
-        ft_score = list(ft[task].values())[0]
+        base_score = primary_metric(base[task])
+        ft_score = primary_metric(ft[task])
         delta = ft_score - base_score
         flag = " ⚠️" if delta < -0.02 else ""
         lines.append(f"| {task} | {base_score:.3f} | {ft_score:.3f} | {delta:+.3f}{flag} |")

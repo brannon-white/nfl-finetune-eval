@@ -23,4 +23,7 @@ openai          # used only as an OpenAI-compatible client against local vLLM
 anthropic       # SFT synthesis + LLM-judge scoring
 lm_eval         # lm-evaluation-harness, for the regression slice
 
+# Deploy (fine-tuned model -> Vertex AI Endpoint)
+google-cloud-aiplatform
+
 python-dotenv

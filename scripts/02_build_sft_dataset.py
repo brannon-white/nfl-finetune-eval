@@ -29,7 +29,7 @@ RAW_DIR = ROOT / "data" / "raw"
 PROCESSED_DIR = ROOT / "data" / "processed"
 EVAL_DIR = ROOT / "data" / "eval"
 
-MODEL = "claude-sonnet-5"
+MODEL = "claude-haiku-4-5-20251001"  # cost-conscious: ~370 synthesis calls over the full rulebook
 
 SYNTH_SYSTEM_PROMPT = """You write instruction-tuning examples for an NFL \
 rulebook fine-tune. Given a source passage from the rulebook, generate \

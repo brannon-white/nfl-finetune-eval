@@ -17,3 +17,6 @@ results/*.csv
 
 .env
 .DS_Store
+
+# transient state from scripts/06_deploy_vertex_endpoint.py
+deploy/

@@ -1,0 +1,37 @@
+# Custom Vertex AI serving container: the same vLLM OpenAI-compatible server
+# used for the RunPod-hosted base model (serve/vllm_finetuned.sh), wrapped to
+# satisfy Vertex AI's custom-container contract (AIP_HTTP_PORT, AIP_STORAGE_URI,
+# a /health route, and a predict route reached via Endpoint.raw_predict).
+#
+# Built on a plain NVIDIA CUDA base + pip-installed vLLM, NOT the
+# vllm/vllm-openai prebuilt image, after two failed prebuilt-tag attempts:
+# :latest dropped "bitsandbytes" from its supported quantization methods
+# (the adapter needs it -- see 06_deploy_vertex_endpoint.py's comment on why
+# the base can't just be swapped to a non-quantized checkpoint), while
+# v0.11.0 (confirmed to support bitsandbytes -- this is the exact version
+# that worked on RunPod) couldn't find libcuda.so.1 on Vertex's L4 nodes --
+# that image's own bundled CUDA runtime doesn't integrate with however Vertex
+# injects the GPU driver into custom containers. Pinning the CUDA base image
+# ourselves and pip-installing the same vllm==0.11.0 + torch==2.8.0 pair
+# verified working on RunPod decouples those two axes instead of gambling on
+# a single prebuilt tag satisfying both.
+FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -sSL https://sdk.cloud.google.com | bash -s -- --disable-prompts --install-dir=/opt
+ENV PATH="/opt/google-cloud-sdk/bin:${PATH}"
+
+RUN pip3 install --no-cache-dir "torch==2.8.0" "vllm==0.11.0" bitsandbytes accelerate transformers
+
+# The xet/hf_transfer accelerated download paths were observed to stall
+# unpredictably on this project's RunPod pod; force the plain, reliable HTTP
+# downloader instead. Combined with an authenticated HF_TOKEN (passed at
+# deploy time), this is fast enough to clear Vertex's startup health check.
+ENV HF_HUB_DISABLE_XET=1
+ENV HF_HUB_ENABLE_HF_TRANSFER=0
+
+COPY vertex_entrypoint.sh /vertex_entrypoint.sh
+RUN chmod +x /vertex_entrypoint.sh
+
+ENTRYPOINT ["/vertex_entrypoint.sh"]

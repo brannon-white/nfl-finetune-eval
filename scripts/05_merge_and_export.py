@@ -23,7 +23,11 @@ def main(base_model: str, max_seq_len: int) -> None:
         load_in_4bit=False,  # merge in full precision, quantize at serve time if desired
     )
     MERGED_DIR.mkdir(parents=True, exist_ok=True)
-    model.save_pretrained_merged(str(MERGED_DIR), tokenizer, save_method="merged_16bit")
+    # The base model ships pre-quantized (nf4/bitsandbytes) on disk, so there's no
+    # full-precision copy to merge into -- merge stays at 4bit. vLLM serves this fine
+    # via its bitsandbytes backend, auto-detected from the merged config's
+    # quantization_config.
+    model.save_pretrained_merged(str(MERGED_DIR), tokenizer, save_method="forced_merged_4bit")
     print(f"Merged model saved to {MERGED_DIR}")
 
 

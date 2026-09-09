@@ -17,12 +17,23 @@ target," a conclusion you wouldn't need a fine-tune to reach.
 
 ## Systems under comparison
 
-| System | Port | What it tests |
+| System | Served on | What it tests |
 |---|---|---|
-| Base, zero-shot | 8000 | floor |
-| Base + RAG | 8000 (+ local retriever) | "did you even need to fine-tune" |
-| Fine-tuned, zero-shot | 8001 | does the knowledge stick without retrieval |
-| Fine-tuned + RAG | 8001 (+ local retriever) | do they compose |
+| Base, zero-shot | RunPod, :18000 | floor |
+| Base + RAG | RunPod, :18000 (+ local retriever) | "did you even need to fine-tune" |
+| Fine-tuned, zero-shot | RunPod, :18001 (vLLM LoRA adapter) or Vertex AI Endpoint | does the knowledge stick without retrieval |
+| Fine-tuned + RAG | same as above (+ local retriever) | do they compose |
+
+## Results
+
+See [`results/REPORT.md`](results/REPORT.md) for the actual numbers from the
+last full run. Headline: fine-tuning alone moved the needle only a little over
+base; RAG did most of the work; fine-tuned+RAG didn't meaningfully beat RAG
+alone. The general-capability regression slice showed real degradation on a
+couple of MMLU subsets and TruthfulQA -- worth digging into before calling the
+fine-tune a clean win. That gap between "fine-tuning helped a bit" and
+"RAG already solved this" is the actual finding this project is built to
+surface.
 
 ## Critical eval-design decision: what "held-out" means for each system
 
@@ -43,20 +54,37 @@ write-up if you change it.
 
 ## Pipeline (run in order)
 
+Everything runs on the RunPod pod (that's where the GPU is). A single 24GB
+card can't hold two vLLM servers' full startup memory footprint at once, so
+steps 6-7 run in two sequential passes -- base model up, run its two systems,
+swap to the fine-tune, run its two systems -- rather than standing up all
+four systems together.
+
 ```bash
 python scripts/01_fetch_data.py          # parse the (manually downloaded) rulebook PDF
 python scripts/02_build_sft_dataset.py   # chunk -> synthesize SFT pairs -> train/val/held_out split
 python scripts/03_build_rag_index.py     # embed full corpus into Chroma
 python scripts/04_train_lora.py          # Unsloth QLoRA fine-tune
-python scripts/05_merge_and_export.py    # merge adapter -> HF model dir for vLLM
 
-bash serve/vllm_base.sh                  # serves base model on :8000
-bash serve/vllm_finetuned.sh             # serves merged fine-tune on :8001
+bash serve/vllm_base.sh                                                          # base model on :18000
+python eval/run_eval.py --systems base,base_rag                                  # first pass
 
-python eval/run_eval.py                  # runs all 4 systems against held_out.jsonl
+# stop vllm_base.sh, free the GPU, then:
+bash serve/vllm_finetuned.sh                                                     # fine-tune (LoRA) on :18001
+python eval/run_eval.py --systems finetuned,finetuned_rag --finetuned-backend local --append  # second pass
+
 bash eval/lm_eval_regression.sh          # base vs fine-tuned on MMLU/ARC/GSM8K/TruthfulQA subsets
 python eval/report.py                    # aggregates everything into results/REPORT.md
 ```
+
+`scripts/06_deploy_vertex_endpoint.py` / `07_teardown_vertex_endpoint.py` and
+`serve/vertex_entrypoint.sh` + `serve/Dockerfile.vertex` ship a path to deploy
+the fine-tune to a Vertex AI Endpoint instead of serving it locally (pass
+`--finetuned-backend vertex`, the default, to `eval/run_eval.py`). That path
+was scaffolded for the GCP managed-endpoint experience but not exercised in
+this run -- see "Compute" below for the merge-vs-LoRA-serving decision that
+affects it, and rework `06_deploy_vertex_endpoint.py` (it still assumes a
+`models/merged/` directory) before using it.
 
 ## One manual step
 
@@ -65,16 +93,45 @@ from nfloperations.com and place it at `data/raw/rulebook.pdf`. Not scripted
 here deliberately — don't hardcode a scraper against a site's ToS into a repo
 you're putting on a public portfolio.
 
-## Compute: RunPod, single RTX 4090
+## Compute: RunPod for training and serving
+
+Training and serving both ran on a single RunPod pod (RTX 3090, 24GB) --
+cheap, fast-iteration compute for the whole pipeline. A Vertex AI Endpoint
+deployment path is scaffolded (`scripts/06_deploy_vertex_endpoint.py` /
+`07_teardown_vertex_endpoint.py`, `serve/vertex_entrypoint.sh` +
+`Dockerfile.vertex`) for the GCP managed-endpoint experience, but wasn't
+exercised in the run behind `results/REPORT.md` -- see below for why, and for
+what it'd take to actually run it.
+
+**Training and serving (RunPod, single 24GB GPU):**
 
 1. Spin up a RunPod pod with the `runpod/pytorch` template, 24GB+ GPU, ~50GB
    volume.
 2. `git clone` this repo onto the pod, `pip install -r requirements.txt`.
 3. Set env vars: `ANTHROPIC_API_KEY` (SFT synthesis + LLM-judge scoring),
-   `HF_TOKEN` (gated model download, e.g. Llama 3.1).
-4. Run the pipeline above. Training a 7-8B QLoRA on a few thousand examples for
-   2-3 epochs is on the order of 1-2 hours on a 4090.
-5. Stop the pod when idle — this is an hourly-billed rental, not a subscription.
+   `HF_TOKEN` (gated/rate-limited model download).
+4. Run steps 1-4 of the pipeline above. Training a 7B QLoRA on a few thousand
+   examples for 2-3 epochs is on the order of an hour on a 3090.
+5. Serve and eval as shown above (two sequential vLLM passes).
+6. Stop the pod when idle — this is an hourly-billed rental, not a
+   subscription.
+
+**Why LoRA serving instead of a merged checkpoint:** the original plan was to
+merge the adapter into the base and serve/deploy a plain HF model dir
+(`scripts/05_merge_and_export.py`, still in the repo but unused). The base
+model ships pre-quantized (bnb-4bit), so merging can't recover full-precision
+weights, and re-saving a 4-bit-merged checkpoint hit an unfixable
+`NotImplementedError` in this transformers version's quantized-tensor save
+path. Rather than chase a library bug, `serve/vllm_finetuned.sh` serves the
+adapter directly via vLLM's native `--enable-lora` support -- numerically
+equivalent (the LoRA deltas are the same small matrices either way) and a
+first-class, separately-tested vLLM code path. This is also why the Vertex
+deploy script needs rework before use: it currently assumes a `models/merged/`
+directory that this pipeline no longer produces. The straightforward fix is
+either (a) point `06_deploy_vertex_endpoint.py` at the base weights + LoRA
+adapter and switch its custom container to vLLM's `--enable-lora` flag, same
+as `serve/vllm_finetuned.sh`, or (b) find an environment where the merge
+actually succeeds (a non-quantized base, or an older transformers pin).
 
 ## Scoring
 

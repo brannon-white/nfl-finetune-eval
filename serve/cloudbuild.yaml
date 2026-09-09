@@ -1,0 +1,7 @@
+# Builds serve/Dockerfile.vertex via Cloud Build (no local Docker/GPU needed).
+# Invoked by scripts/06_deploy_vertex_endpoint.py:
+#   gcloud builds submit serve/ --config=serve/cloudbuild.yaml --substitutions=_IMAGE=<image_uri>
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "-f", "Dockerfile.vertex", "-t", "$_IMAGE", "."]
+images: ["$_IMAGE"]

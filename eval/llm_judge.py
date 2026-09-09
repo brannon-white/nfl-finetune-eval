@@ -7,7 +7,7 @@ import json
 
 from anthropic import Anthropic
 
-MODEL = "claude-sonnet-5"
+MODEL = "claude-haiku-4-5-20251001"  # cost-conscious: hundreds of judge calls across 4 systems x held-out set
 
 JUDGE_SYSTEM_PROMPT = """You are grading an AI system's answer to an NFL \
 rulebook question. You will see the question, the source rule passage the \
@@ -49,5 +49,5 @@ def judge(client: Anthropic, question: str, source_text: str,
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        start, end = raw.find("{"), raw.rfind("}") + 1
-        return json.loads(raw[start:end])
+        start = raw.find("{")
+        return json.JSONDecoder().raw_decode(raw[start:])[0]
